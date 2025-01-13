@@ -16,6 +16,7 @@ package web
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/ecodeclub/ekit/slice"
 	"github.com/ecodeclub/ginx"
@@ -67,12 +68,28 @@ func (h *Handler) PubDetail(ctx *ginx.Context,
 		examine domain.Result
 	)
 	uid := sess.Claims().Uid
+	isMemeber := false
+	memberDDL, _ := sess.Claims().Get("memberDDL").AsInt64()
+	// 如果 jwt 中的数据格式不对，那么这里就会返回 0
+	// jwt中找到会员截止日期，没有过期
+	if memberDDL > time.Now().UnixMilli() {
+		isMemeber = true
+	}
 	eg.Go(func() error {
 		var err error
-		detail, err = h.svc.PubDetail(ctx, req.Qid)
-		if err != nil {
-			return fmt.Errorf("查找面试题详情失败 %w", err)
+		if isMemeber {
+			detail, err = h.svc.PubDetail(ctx, req.Qid)
+			if err != nil {
+				return fmt.Errorf("查找面试题详情失败 %w", err)
+			}
+		}else {
+			// 非会员返回部分数据
+			detail,err = h.svc.PartPubDetail(ctx,req.Qid)
+			if err != nil {
+				return fmt.Errorf("查找面试题详情失败 %w", err)
+			}
 		}
+
 		// 非八股文，我们需要判定是否有权限
 		// 暂时在这里聚合
 		if !detail.IsBaguwen() {

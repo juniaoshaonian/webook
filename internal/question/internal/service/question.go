@@ -23,6 +23,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/ecodeclub/webook/internal/pkg/html_truncate"
 	"github.com/ecodeclub/webook/internal/question/internal/domain"
 	"github.com/ecodeclub/webook/internal/question/internal/repository"
 )
@@ -44,6 +45,8 @@ type Service interface {
 	// GetPubByIDs 目前只会获取基础信息，也就是不包括答案在内的信息
 	GetPubByIDs(ctx context.Context, ids []int64) ([]domain.Question, error)
 	PubDetail(ctx context.Context, qid int64) (domain.Question, error)
+	// PartPubDetail 提供给非会员调用返回部分数据
+	PartPubDetail(ctx context.Context, qid int64) (domain.Question, error)
 }
 
 type service struct {
@@ -54,6 +57,26 @@ type service struct {
 
 	logger      *elog.Component
 	syncTimeout time.Duration
+	truncator   html_truncate.HTMLTruncator
+}
+
+func (s *service) PartPubDetail(ctx context.Context, qid int64) (domain.Question, error) {
+	que, err := s.repo.GetPubByID(ctx, qid)
+	if err == nil {
+		go func() {
+			newCtx, cancel := context.WithTimeout(context.Background(), time.Second*3)
+			defer cancel()
+			err1 := s.intrProducer.Produce(newCtx, event.NewViewCntEvent(qid, domain.QuestionBiz))
+			if err1 != nil {
+				s.logger.Error("发送问题阅读计数消息到消息队列失败", elog.FieldErr(err1), elog.Int64("qid", qid))
+			}
+		}()
+	}
+	que.Answer.Analysis.Content = s.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 3)
+	que.Answer.Advanced.Content = s.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 1)
+	que.Answer.Basic.Content = s.truncator.TruncateByParagraphs(que.Answer.Basic.Content, 1)
+	que.Answer.Intermediate.Content = s.truncator.TruncateByParagraphs(que.Answer.Intermediate.Content, 1)
+	return que, err
 }
 
 func (s *service) GetPubByIDs(ctx context.Context, ids []int64) ([]domain.Question, error) {
@@ -176,6 +199,7 @@ func NewService(repo repository.Repository,
 		knowledgeBaseProducer: knowledgeBaseProducer,
 		logger:                elog.DefaultLogger,
 		syncTimeout:           10 * time.Second,
+		truncator:             html_truncate.DefaultHTMLTruncator(),
 	}
 }
 

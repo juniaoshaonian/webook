@@ -71,11 +71,11 @@ func (s *service) PartPubDetail(ctx context.Context, qid int64) (domain.Question
 				s.logger.Error("发送问题阅读计数消息到消息队列失败", elog.FieldErr(err1), elog.Int64("qid", qid))
 			}
 		}()
+		que.Answer.Analysis.Content = s.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 3)
+		que.Answer.Advanced.Content = s.truncator.TruncateByParagraphs(que.Answer.Advanced.Content, 1)
+		que.Answer.Basic.Content = s.truncator.TruncateByParagraphs(que.Answer.Basic.Content, 1)
+		que.Answer.Intermediate.Content = s.truncator.TruncateByParagraphs(que.Answer.Intermediate.Content, 1)
 	}
-	que.Answer.Analysis.Content = s.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 3)
-	que.Answer.Advanced.Content = s.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 1)
-	que.Answer.Basic.Content = s.truncator.TruncateByParagraphs(que.Answer.Basic.Content, 1)
-	que.Answer.Intermediate.Content = s.truncator.TruncateByParagraphs(que.Answer.Intermediate.Content, 1)
 	return que, err
 }
 

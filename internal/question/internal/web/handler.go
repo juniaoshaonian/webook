@@ -16,18 +16,20 @@ package web
 
 import (
 	"fmt"
-	"time"
-
 	"github.com/ecodeclub/ekit/slice"
 	"github.com/ecodeclub/ginx"
 	"github.com/ecodeclub/ginx/session"
 	"github.com/ecodeclub/webook/internal/interactive"
+	"github.com/ecodeclub/webook/internal/member"
 	"github.com/ecodeclub/webook/internal/permission"
+	"github.com/ecodeclub/webook/internal/pkg/html_truncate"
 	"github.com/ecodeclub/webook/internal/question/internal/domain"
 	"github.com/ecodeclub/webook/internal/question/internal/service"
 	"github.com/gin-gonic/gin"
 	"github.com/gotomicro/ego/core/elog"
 	"golang.org/x/sync/errgroup"
+	"strconv"
+	"time"
 )
 
 type Handler struct {
@@ -36,79 +38,57 @@ type Handler struct {
 	examineSvc service.ExamineService
 	svc        service.Service
 	permSvc    permission.Service
+	// truncator 进行html的裁剪
+	truncator html_truncate.HTMLTruncator
+	sp        session.Provider
+	memberSvc member.Service
 }
 
 func NewHandler(intrSvc interactive.Service,
 	examineSvc service.ExamineService,
 	permSvc permission.Service,
-	svc service.Service) *Handler {
-	return &Handler{intrSvc: intrSvc,
+	svc service.Service,
+	memberSvc member.Service,
+) *Handler {
+	return &Handler{
+		intrSvc:    intrSvc,
 		permSvc:    permSvc,
-		examineSvc: examineSvc, svc: svc}
+		examineSvc: examineSvc,
+		svc:        svc,
+		memberSvc: memberSvc,
+		sp:         session.DefaultProvider(),
+		truncator:  html_truncate.DefaultHTMLTruncator(),
+	}
 }
 
 func (h *Handler) PublicRoutes(server *gin.Engine) {
 	// 下次发版要删除这个 pub
 	server.POST("/question/pub/list", ginx.B[Page](h.PubList))
 	server.POST("/question/list", ginx.B[Page](h.PubList))
-}
 
-func (h *Handler) MemberRoutes(server *gin.Engine) {
-	// 下次发版要删除这个 pub
-	server.POST("/question/pub/detail", ginx.BS[Qid](h.PubDetail))
-	server.POST("/question/detail", ginx.BS[Qid](h.PubDetail))
+	server.POST("/question/pub/detail", ginx.B[Qid](h.PubDetail))
+	server.POST("/question/detail", ginx.B[Qid](h.PubDetail))
 }
 
 func (h *Handler) PubDetail(ctx *ginx.Context,
-	req Qid, sess session.Session) (ginx.Result, error) {
+	req Qid) (ginx.Result, error) {
 	var (
 		eg      errgroup.Group
-		detail  domain.Question
 		intr    interactive.Interactive
 		examine domain.Result
 	)
-	uid := sess.Claims().Uid
-	isMemeber := false
-	memberDDL, _ := sess.Claims().Get("memberDDL").AsInt64()
-	// 如果 jwt 中的数据格式不对，那么这里就会返回 0
-	// jwt中找到会员截止日期，没有过期
-	if memberDDL > time.Now().UnixMilli() {
-		isMemeber = true
+
+	detail, err := h.svc.PubDetail(ctx, req.Qid)
+	if err != nil {
+		return systemErrorResult, fmt.Errorf("查找面试题详情失败 %w", err)
 	}
-	eg.Go(func() error {
-		var err error
-		if isMemeber {
-			detail, err = h.svc.PubDetail(ctx, req.Qid)
-			if err != nil {
-				return fmt.Errorf("查找面试题详情失败 %w", err)
-			}
-		}else {
-			// 非会员返回部分数据
-			detail,err = h.svc.PartPubDetail(ctx,req.Qid)
-			if err != nil {
-				return fmt.Errorf("查找面试题详情失败 %w", err)
-			}
-		}
-
-		// 非八股文，我们需要判定是否有权限
-		// 暂时在这里聚合
-		if !detail.IsBaguwen() {
-			var ok bool
-			ok, err = h.permSvc.HasPermission(ctx, permission.Permission{
-				Uid:   uid,
-				Biz:   detail.Biz,
-				BizID: detail.BizId,
-			})
-			if err != nil {
-				return fmt.Errorf("判定用户是否有权限失败 %w", err)
-			}
-			if !ok {
-				return fmt.Errorf("用户不具有面试题对应业务的权限 uid %d, biz: %s, bizId: %d", uid, detail.Biz, detail.BizId)
-			}
-		}
-		return nil
-	})
-
+	has, uid := h.checkPermission(ctx, detail)
+	// 没权限就返回部分数据
+	if !has {
+		detail = h.partQuestion(detail)
+	}
+	// 非八股文，我们需要判定是否有权限
+	// 暂时在这里聚合
 	eg.Go(func() error {
 		var err error
 		intr, err = h.intrSvc.Get(ctx, domain.QuestionBiz, req.Qid, uid)
@@ -120,7 +100,7 @@ func (h *Handler) PubDetail(ctx *ginx.Context,
 		examine, err = h.examineSvc.QuestionResult(ctx, uid, req.Qid)
 		return err
 	})
-	err := eg.Wait()
+	err = eg.Wait()
 	if err != nil {
 		return systemErrorResult, err
 	}
@@ -166,4 +146,66 @@ func (h *Handler) toQuestionList(data []domain.Question, cnt int64, intrs map[in
 			return newQuestion(src, intrs[src.Id])
 		}),
 	}
+}
+
+func (h *Handler) partQuestion(que domain.Question) domain.Question {
+	que.Answer.Analysis.Content = h.truncator.TruncateByParagraphs(que.Answer.Analysis.Content, 3)
+	que.Answer.Advanced.Content = h.truncator.TruncateByParagraphs(que.Answer.Advanced.Content, 1)
+	que.Answer.Intermediate.Content = h.truncator.TruncateByParagraphs(que.Answer.Intermediate.Content, 1)
+	que.Answer.Basic.Content = h.truncator.TruncateByParagraphs(que.Answer.Basic.Content, 1)
+	return que
+}
+
+func (h *Handler) checkPermission(gctx *ginx.Context, que domain.Question) (bool, int64) {
+	sess, err := h.sp.Get(gctx)
+	if err != nil {
+		// 没登录
+		return false, 0
+	}
+	uid := sess.Claims().Uid
+	// 是八股文校验是否是会员
+	if que.IsBaguwen() {
+		claims := sess.Claims()
+		memberDDL, _ := claims.Get("memberDDL").AsInt64()
+		// 如果 jwt 中的数据格式不对，那么这里就会返回 0
+		// jwt中找到会员截止日期，没有过期
+		if memberDDL > time.Now().UnixMilli() {
+			return true, uid
+		}
+		info, err := h.memberSvc.GetMembershipInfo(gctx, uid)
+		if err != nil {
+			return false, uid
+		}
+		if info.EndAt == 0 {
+			return false, uid
+		}
+		if info.EndAt < time.Now().UnixMilli() {
+			return false, uid
+		}
+		// 在原有jwt数据中添加会员截止日期
+		jwtData := claims.Data
+		jwtData["memberDDL"] = strconv.FormatInt(info.EndAt, 10)
+		claims.Data = jwtData
+		err = h.sp.UpdateClaims(gctx, claims)
+		if err != nil {
+			elog.Error("重新生成 token 失败", elog.Int64("uid", claims.Uid), elog.FieldErr(err))
+			return true, uid
+		}
+		return true, uid
+	} else {
+		var ok bool
+		ok, err = h.permSvc.HasPermission(gctx, permission.Permission{
+			Uid:   uid,
+			Biz:   que.Biz,
+			BizID: que.BizId,
+		})
+		if err != nil {
+			return false, uid
+		}
+		if !ok {
+			return false, uid
+		}
+		return true, uid
+	}
+
 }

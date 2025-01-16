@@ -159,7 +159,7 @@ func initGinxServer(sp session.Provider,
 
 	// 会员校验
 	res.Use(checkMembershipMiddleware.Build())
-	qh.MemberRoutes(res.Engine)
+	//qh.MemberRoutes(res.Engine)
 	examineHdl.MemberRoutes(res.Engine)
 	caseHdl.MemberRoutes(res.Engine)
 	fbHdl.MemberRoutes(res.Engine)

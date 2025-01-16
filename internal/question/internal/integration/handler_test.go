@@ -19,7 +19,7 @@ package integration
 import (
 	"context"
 	"fmt"
-	"github.com/ecodeclub/webook/internal/pkg/middleware"
+	"github.com/ecodeclub/webook/internal/member"
 	"net/http"
 	"strconv"
 	"testing"
@@ -103,12 +103,11 @@ func (s *HandlerTestSuite) SetupSuite() {
 	}).AnyTimes()
 
 	module, err := startup.InitModule(producer, nil, intrModule,
-		&permission.Module{Svc: permSvc}, &ai.Module{})
+		&permission.Module{Svc: permSvc}, &ai.Module{},&member.Module{})
 	require.NoError(s.T(), err)
 	econf.Set("server", map[string]any{"contextTimeout": "1s"})
 	server := egin.Load("server").Build()
 
-	module.Hdl.PublicRoutes(server.Engine)
 	module.QsHdl.PublicRoutes(server.Engine)
 	server.Use(func(ctx *gin.Context) {
 		notMember := ctx.GetHeader("not_member") == "1"
@@ -127,9 +126,8 @@ func (s *HandlerTestSuite) SetupSuite() {
 			Data: data,
 		}))
 	})
+	module.Hdl.PublicRoutes(server.Engine)
 	module.QsHdl.PrivateRoutes(server.Engine)
-	server.Use(middleware.NewCheckMembershipMiddlewareBuilder(nil).Build())
-	module.Hdl.MemberRoutes(server.Engine)
 
 	s.server = server
 	s.db = testioc.InitDB()

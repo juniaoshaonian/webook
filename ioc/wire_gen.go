@@ -23,7 +23,7 @@ import (
 	"github.com/ecodeclub/webook/internal/pkg/middleware"
 	"github.com/ecodeclub/webook/internal/product"
 	"github.com/ecodeclub/webook/internal/project"
-	baguwen "github.com/ecodeclub/webook/internal/question"
+	"github.com/ecodeclub/webook/internal/question"
 	"github.com/ecodeclub/webook/internal/recon"
 	"github.com/ecodeclub/webook/internal/resume"
 	"github.com/ecodeclub/webook/internal/review"
@@ -66,7 +66,7 @@ func InitApp() (*App, error) {
 	if err != nil {
 		return nil, err
 	}
-	baguwenModule, err := baguwen.InitModule(db, interactiveModule, cache, permissionModule, aiModule, mq)
+	baguwenModule, err := baguwen.InitModule(db, interactiveModule, cache, permissionModule, aiModule, module, mq)
 	if err != nil {
 		return nil, err
 	}

@@ -190,11 +190,13 @@ func InitApp() (*App, error) {
 	v50 := initCronJobs(v46, v47, v48, v49)
 	v51 := baguwenModule.KnowledgeJobStarter
 	v52 := initJobs(v51)
+	v53 := initMQConsumers(mq)
 	app := &App{
-		Web:   component,
-		Admin: adminServer,
-		Crons: v50,
-		Jobs:  v52,
+		Web:       component,
+		Admin:     adminServer,
+		Crons:     v50,
+		Jobs:      v52,
+		Consumers: v53,
 	}
 	return app, nil
 }
